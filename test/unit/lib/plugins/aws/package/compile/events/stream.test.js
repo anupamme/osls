@@ -12,11 +12,13 @@ const scalarKinesisStreamArn = 'arn:aws:kinesis:region:account:stream/scalar';
 const zeroWindowStreamArn = 'arn:aws:dynamodb:region:account:table/zero/stream/1';
 const consumerFalseStreamArn = 'arn:aws:kinesis:region:account:stream/consumer-false';
 const kinesisOptionsStreamArn = 'arn:aws:kinesis:region:account:stream/options';
+const s3DestinationArn = 'arn:aws:s3:::failed-batches';
 const snsDestinationArn = 'arn:aws:sns:region:account:snstopic';
 const kinesisOptionsDestinationArn = 'arn:aws:sns:region:account:kinesisoptions';
 const existingConsumerArn = 'arn:aws:kinesis:region:account:stream/xyz/consumer/foobar:1558544531';
 
 const ddbGetAttArn = { 'Fn::GetAtt': ['SomeDdbTable', 'StreamArn'] };
+const s3GetAttArn = { 'Fn::GetAtt': ['FailedBatchesBucket', 'Arn'] };
 const snsGetAttArn = { 'Fn::GetAtt': ['SomeSNS', 'Arn'] };
 const foreignKinesisImportArn = { 'Fn::ImportValue': 'ForeignKinesis' };
 const foreignSqsImportArn = { 'Fn::ImportValue': 'ForeignSQS' };
@@ -470,6 +472,25 @@ describe('test/unit/lib/plugins/aws/package/compile/events/stream.test.js', () =
                     },
                   },
                 },
+                {
+                  stream: {
+                    arn: 'arn:aws:dynamodb:region:account:table/s3string/stream/1',
+                    destinations: {
+                      onFailure: s3DestinationArn,
+                    },
+                  },
+                },
+                {
+                  stream: {
+                    arn: 'arn:aws:dynamodb:region:account:table/s3getatt/stream/1',
+                    destinations: {
+                      onFailure: {
+                        arn: s3GetAttArn,
+                        type: 's3',
+                      },
+                    },
+                  },
+                },
               ],
             },
           },
@@ -676,6 +697,17 @@ describe('test/unit/lib/plugins/aws/package/compile/events/stream.test.js', () =
       ).to.deep.equal(foreignSqsRef);
     });
 
+    it('should support S3 for `destinations.onFailure`', () => {
+      expect(
+        getStreamResource('destinationVariants', 'dynamodb', 's3string').Properties
+          .DestinationConfig.OnFailure.Destination
+      ).to.equal(s3DestinationArn);
+      expect(
+        getStreamResource('destinationVariants', 'dynamodb', 's3getatt').Properties
+          .DestinationConfig.OnFailure.Destination
+      ).to.deep.equal(s3GetAttArn);
+    });
+
     it('should support `functionResponseType`', () => {
       expect(eventSourceMappingResource.Properties.FunctionResponseTypes).to.include.members([
         'ReportBatchItemFailures',
@@ -710,7 +742,7 @@ describe('test/unit/lib/plugins/aws/package/compile/events/stream.test.js', () =
       );
       const streamStatements = getIamStatements().filter(({ Action }) => {
         const actions = Array.isArray(Action) ? Action : [Action];
-        return actions.some((action) => /^(dynamodb|kinesis|sns|sqs):/.test(action));
+        return actions.some((action) => /^(dynamodb|kinesis|s3|sns|sqs):/.test(action));
       });
       const expectedStreamStatements = [
         {
@@ -866,6 +898,18 @@ describe('test/unit/lib/plugins/aws/package/compile/events/stream.test.js', () =
             'arn:aws:dynamodb:region:account:table/bar/stream/1',
             'arn:aws:dynamodb:region:account:table/buzz/stream/1',
             'arn:aws:dynamodb:region:account:table/fizz/stream/1',
+            'arn:aws:dynamodb:region:account:table/s3string/stream/1',
+            'arn:aws:dynamodb:region:account:table/s3getatt/stream/1',
+          ],
+        },
+        {
+          Effect: 'Allow',
+          Action: ['s3:PutObject', 's3:ListBucket'],
+          Resource: [
+            s3DestinationArn,
+            `${s3DestinationArn}/*`,
+            s3GetAttArn,
+            { 'Fn::Join': ['', [s3GetAttArn, '/*']] },
           ],
         },
         {
